@@ -6,14 +6,13 @@ use crate::model::{Event, File};
 use tokio::sync::mpsc;
 use std::{collections::LinkedList, collections::BTreeSet, str::FromStr};
 use std::path::PathBuf;
-use tokio::task::JoinSet;
+use tokio::task::{JoinSet, JoinHandle};
 use std::error::Error;
-
 
 #[derive(Debug)]
 
 pub struct FileScanner {
-    file_tx: mpsc::Sender<(String, Event)>,
+    file_tx: mpsc::Sender<Event>, //mpsc used for sending file events
     folder_path: String,
     curr_buff: usize, // should be 0 or 1.
     //stores 2 Sets of files. One is for new read and other for old to compare with and find deleted/created files.
@@ -23,31 +22,13 @@ pub struct FileScanner {
 //Reads content of directory given by folder_path argument
 impl FileScanner {
 
-    pub fn new(path: &String, tx: mpsc::Sender<(String, Event)>) -> FileScanner {
-        
-        FileScanner{
+    pub fn new(path: &String, tx: mpsc::Sender<Event>) -> FileScanner {
+        FileScanner {
             file_tx: tx,
             folder_path: path.clone(),
             curr_buff: 0,
             buff: vec![BTreeSet::new(), BTreeSet::new()],
         }
-    }
-
-/*     async fn files_reciver(&mut self) -> Result<(), Box<dyn Error>> {
-        while let Some((path, file)) = self.file_rx.recv().await {
-            let old_val = self.files.insert(file);
-
-        }
-
-        Ok(())
-    } */
-
-    pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut rac = task::spawn(async {
-            loop {
-                
-            }
-        });
     }
 
     pub async fn read_and_compare(&mut self) -> Result<(), Box<dyn Error>> {
@@ -61,12 +42,20 @@ impl FileScanner {
         // new files
         let new = self.buff[self.curr_buff].difference(&self.buff[prev_buff]);
         for n in new {
-            println!("New file {n:?}");
+            let ev = Event {
+                ev_type: crate::model::EventType::NEW, 
+                file: n.clone(),
+            };
+            self.file_tx.send(ev).await?;
         }
         // deleted files
         let del = self.buff[prev_buff].difference(&self.buff[self.curr_buff]);
         for d in del {
-            println!("Deleted file {d:?}");
+            let ev = Event {
+                ev_type: crate::model::EventType::DEL, 
+                file: d.clone(),
+            };
+            self.file_tx.send(ev).await?;
         }
         // those intersection has files with same path
         // but last_mod_date can be different as we don't use it in File comparator
@@ -78,9 +67,12 @@ impl FileScanner {
         // not perfect solution, but its only ~O(n) + difference and intersection costs - good enough
         // would be easier if those functions had ability to use custom comparator function.
         for (prev, curr) in p_iter {
-            if (prev.path == curr.path && prev.last_mod_date != curr.last_mod_date)
-            {
-                println!("Mod date was changed! {prev:?} | {curr:?}");
+            if prev.path == curr.path && prev.last_mod_date != curr.last_mod_date {
+                let ev = Event {
+                    ev_type: crate::model::EventType::MOD, 
+                    file: curr.clone(),
+                };
+                self.file_tx.send(ev).await?;
             }
         }    
         return Ok(());
@@ -101,10 +93,6 @@ impl FileScanner {
             }
             self.buff[self.curr_buff].append(&mut dir_files);
         }
-
-        //for f in &self.buff[self.curr_buff % 2] {
-        //    println!("{:?} | {}", f.path, f.last_mod_date);
-        //}
         return Ok(());
     }
 

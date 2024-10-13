@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use chrono::DateTime;
 use std::fmt;
 
-#[derive(Debug, Eq)]
+#[derive(Debug, Eq, Clone)]
 pub struct File {
     pub path: PathBuf,
     pub last_mod_date: DateTime<chrono::offset::Local>,
