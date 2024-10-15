@@ -70,30 +70,28 @@ fn handle_args() -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-
-    //println!("path: {:?}", abspath(&cli.path));
-
+    let pth = handle_args();
     let (tx, rx) = mpsc::channel::<model::Event>(100);
-    
-    let pth = handle_args();//String::from("/home/sus/work/testground");
-
+   
     let mut fsc = file_scanner::FileScanner::new(&pth, tx);
     
-    //do initial read
+    // do initial read
     fsc.read_path_recursive().await.unwrap();
     let init = fsc.get_curr_read_copy();
     write_files(&init, &pth).await;
 
-    //used to stop reader_task when needed
+    // used to stop reader_task when needed
     let reader_run = Arc::new(AtomicBool::new(true));
     let reader_task = task::spawn(reader(fsc, Arc::clone(&reader_run)));
-    
+    // writes events from rx to stdout
     let writer = task::spawn(event_write(rx, pth.clone()));
-    
+    // await ctrl + c signal from user
     signal::ctrl_c().await?;
-
+    // stop internal loop of reader_task
     reader_run.store(false, Ordering::Release);
+    // await for FileScanner to get final state of buffer
     fsc = reader_task.await.unwrap();
+    // stop writer task
     writer.abort();
 
     //current buffer could be half filled if we stop program in the middle of reading process
@@ -104,7 +102,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 
-//get absolute path
+// get absolute path
 fn abspath(p: &String) -> Option<String> {
     let exp_path = shellexpand::full(p).ok()?;
     let can_path = std::fs::canonicalize(exp_path.as_ref()).ok()?;
@@ -113,11 +111,11 @@ fn abspath(p: &String) -> Option<String> {
 
 async fn write_files(files: &BTreeSet<model::File>, base: &String) {
     let mut stdout = tokio::io::stdout();
-    //delimiter
+    // delimiter
     stdout.write_all(b"--------------------------------------\n").await.unwrap();
     for f in files {
         let relative = f.get_relative_path(base);
-        //“[Date Time] PATH“
+        // “[Date Time] PATH“
         let msg =  format!("[{}] /{}\n", f.last_mod_date.format("%d.%m.%Y %H:%M:%S"), relative);
         stdout.write_all(msg.as_bytes()).await.unwrap();
     }
@@ -127,7 +125,7 @@ async fn write_files(files: &BTreeSet<model::File>, base: &String) {
 async fn event_write(mut rx: mpsc::Receiver<model::Event>, base: String) {
     let mut stdout = tokio::io::stdout();
     while let Some(ev) = rx.recv().await {
-        //“[EVENT] PATH”
+        // “[EVENT] PATH”
         let msg =  format!("[{}] /{}\n", ev.ev_type, ev.file.get_relative_path(&base));
         stdout.write_all(msg.as_bytes()).await.unwrap();
         stdout.flush().await.unwrap();

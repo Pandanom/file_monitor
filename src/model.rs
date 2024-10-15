@@ -57,7 +57,7 @@ pub struct Event {
     pub file: File,
 }
 
-//File buffer for changes analizing 
+// File buffer for changes analizing 
 // Stores 2 BTreeSets of T
 #[derive(Debug)]
 pub struct DBuffer<T> {

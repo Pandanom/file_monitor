@@ -39,11 +39,11 @@ impl FileScanner {
     }
 
     pub async fn read_and_compare(&mut self) -> Result<(), Box<dyn Error>> {
-        //switch to next buffer to not rewrite previous read
+        // switch to next buffer to not rewrite previous read
         self.buff.next();
         self.read_path_recursive().await.unwrap();
 
-        //get buffers
+        // get buffers
         let (prev_buff, curr_buff) = self.buff.get_buffers();
 
         // difference returns elements that are in self but not in other
