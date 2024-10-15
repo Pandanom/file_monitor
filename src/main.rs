@@ -1,17 +1,20 @@
 mod file_scanner;
 mod model;
+
 use std::error::Error;
 use std::sync::atomic;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+use std::str::FromStr;
+
 use tokio::sync::mpsc;
 use tokio::task;
 use tokio::signal;
 use tokio::io::AsyncWriteExt;
-use std::collections::BTreeSet;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+
 use clap::Parser;
-use std::str::FromStr;
 
 static DEFAULT_PATH: &'static str = "~/inbox/.";
 
