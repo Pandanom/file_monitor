@@ -6,7 +6,7 @@ use crate::model::{Event, File};
 use tokio::sync::mpsc;
 use std::{collections::LinkedList, collections::BTreeSet, str::FromStr};
 use std::path::PathBuf;
-use tokio::task::{JoinSet, JoinHandle};
+use tokio::task::JoinSet;
 use std::error::Error;
 
 #[derive(Debug)]
@@ -14,9 +14,7 @@ use std::error::Error;
 pub struct FileScanner {
     file_tx: mpsc::Sender<Event>, //mpsc used for sending file events
     folder_path: String,
-    curr_buff: usize, // should be 0 or 1.
-    //stores 2 Sets of files. One is for new read and other for old to compare with and find deleted/created files.
-    buff: Vec<BTreeSet<File>>,
+    buff: crate::model::DBuffer<crate::model::File>,
 }
 
 //Reads content of directory given by folder_path argument
@@ -26,21 +24,32 @@ impl FileScanner {
         FileScanner {
             file_tx: tx,
             folder_path: path.clone(),
-            curr_buff: 0,
-            buff: vec![BTreeSet::new(), BTreeSet::new()],
+            buff: crate::model::DBuffer::new(),
         }
+    }
+
+    pub fn get_curr_read_copy(&self) -> BTreeSet<crate::model::File> {
+        let (_, buff) = self.buff.get_buffers();
+        return buff.clone();
+    }
+
+    pub fn get_prev_read_copy(&self) -> BTreeSet<crate::model::File> {
+        let (buff, _) = self.buff.get_buffers();
+        return buff.clone();
     }
 
     pub async fn read_and_compare(&mut self) -> Result<(), Box<dyn Error>> {
         //switch to next buffer to not rewrite previous read
-        let prev_buff = self.curr_buff;
-        self.curr_buff = (self.curr_buff + 1) % 2;
+        self.buff.next();
         self.read_path_recursive().await.unwrap();
 
+        //get buffers
+        let (prev_buff, curr_buff) = self.buff.get_buffers();
+
         // difference returns elements that are in self but not in other
-        // therefore
+        // therefore 
         // new files
-        let new = self.buff[self.curr_buff].difference(&self.buff[prev_buff]);
+        let new = curr_buff.difference(&prev_buff);
         for n in new {
             let ev = Event {
                 ev_type: crate::model::EventType::NEW, 
@@ -49,7 +58,7 @@ impl FileScanner {
             self.file_tx.send(ev).await?;
         }
         // deleted files
-        let del = self.buff[prev_buff].difference(&self.buff[self.curr_buff]);
+        let del = prev_buff.difference(curr_buff);
         for d in del {
             let ev = Event {
                 ev_type: crate::model::EventType::DEL, 
@@ -59,8 +68,8 @@ impl FileScanner {
         }
         // those intersection has files with same path
         // but last_mod_date can be different as we don't use it in File comparator
-        let prev_it = self.buff[prev_buff].intersection(&self.buff[self.curr_buff]);
-        let curr_it = self.buff[self.curr_buff].intersection(&self.buff[prev_buff]);
+        let prev_it = prev_buff.intersection(&curr_buff);
+        let curr_it = curr_buff.intersection(&prev_buff);
 
         let p_iter = prev_it.zip(curr_it);
         // to find modified files we simply need to compare last_mod_date on those 2 intersections
@@ -81,9 +90,10 @@ impl FileScanner {
 // reads folder_path recursively. Writes results into buff[self.curr_buff]
     pub async fn read_path_recursive(&mut self) -> Result<(), Box<dyn Error>> {
         let mut dir_read_tasks = JoinSet::new();
-        self.buff[self.curr_buff].clear();
         //spawn initial task to read "inbox"
         dir_read_tasks.spawn(Self::read_path(PathBuf::from_str(&self.folder_path)?));
+
+        let curr_buff = self.buff.get_curr();
 
         while let Some(res) = dir_read_tasks.join_next().await {
             let (mut children_dirs, mut dir_files) = res?.unwrap();
@@ -91,7 +101,8 @@ impl FileScanner {
             for _ in 0..children_dirs.len() {
                 dir_read_tasks.spawn(Self::read_path(children_dirs.pop_front().unwrap()));
             }
-            self.buff[self.curr_buff].append(&mut dir_files);
+            curr_buff.append(&mut dir_files);
+            
         }
         return Ok(());
     }
